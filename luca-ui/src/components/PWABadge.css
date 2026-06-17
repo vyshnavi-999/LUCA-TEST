@@ -1,0 +1,36 @@
+.pwa-badge {
+  position: fixed;
+  right: 0;
+  bottom: 0;
+  margin: var(--spacing-lg);
+  padding: var(--spacing-md);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  z-index: 100;
+  background-color: var(--surface-color);
+  box-shadow: var(--shadow-lg);
+  max-width: 350px;
+}
+
+.pwa-toast {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+}
+
+.pwa-message {
+  font-size: 0.9rem;
+  font-weight: 500;
+  margin-bottom: var(--spacing-sm);
+}
+
+.pwa-buttons {
+  display: flex;
+  gap: var(--spacing-sm);
+}
+
+.pwa-buttons button {
+  flex: 1;
+  padding: var(--spacing-sm);
+  font-size: 0.875rem;
+}

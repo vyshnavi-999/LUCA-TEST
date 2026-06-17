@@ -1,0 +1,212 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Admin — pending approvals</title>
+<style>
+  :root{--bg:#0e1116;--panel:#171b22;--line:#262c36;--ink:#e8ebf0;--mut:#8a93a3;--accent:#5ad19a;--danger:#ff5d5d;--warn:#f0a500}
+  *{box-sizing:border-box}
+  body{margin:0;min-height:100vh;background:var(--bg);color:var(--ink);font:15px/1.5 ui-sans-serif,system-ui,-apple-system,sans-serif;display:grid;place-items:start center;padding:24px}
+  .card{width:100%;max-width:480px;background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:28px}
+  h1{font-size:18px;margin:0 0 4px;letter-spacing:-.01em}
+  .sub{color:var(--mut);font-size:13px;margin:0 0 22px}
+  label{display:block;font-size:12px;color:var(--mut);margin:0 0 6px}
+  input{width:100%;padding:12px 14px;background:#0e1116;color:var(--ink);border:1px solid var(--line);border-radius:9px;font-size:15px;outline:none}
+  input:focus{border-color:var(--accent)}
+  button{width:100%;margin-top:14px;padding:14px;border:0;border-radius:9px;background:var(--accent);color:#062017;font-weight:600;font-size:15px;cursor:pointer;min-height:48px}
+  button:active{opacity:.85}
+  button.approve{background:var(--accent);color:#062017;width:auto;margin:0;padding:10px 20px;font-size:14px;border-radius:8px;white-space:nowrap}
+  button.approve:disabled{opacity:.4;cursor:default}
+  .hidden{display:none}
+  .msg{margin-top:14px;font-size:13px;min-height:18px;text-align:center}
+  .msg.err{color:var(--danger)}
+  .msg.ok{color:var(--accent)}
+
+  /* user list */
+  #list{margin-top:0}
+  .user-row{display:flex;align-items:center;gap:14px;padding:16px 0;border-bottom:1px solid var(--line)}
+  .user-row:last-child{border-bottom:none}
+  .user-info{flex:1;min-width:0}
+  .user-name{font-weight:600;font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .user-id{font-size:13px;color:var(--mut);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .user-time{font-size:12px;color:var(--mut);margin-top:2px}
+  .user-ip{font-size:12px;color:var(--mut);margin-top:2px;font-family:ui-monospace,monospace}
+  .ip-warn{font-size:12px;color:var(--warn);margin-top:3px;font-weight:600}
+  .row-msg{font-size:12px;margin-top:4px}
+  .row-msg.ok{color:var(--accent)}
+  .row-msg.err{color:var(--danger)}
+  .empty{color:var(--mut);font-size:14px;text-align:center;padding:28px 0}
+
+  .toolbar{display:flex;align-items:center;justify-content:space-between;margin-bottom:22px;gap:12px}
+  .toolbar h1{margin:0}
+  button.refresh{width:auto;margin:0;padding:10px 16px;font-size:13px;background:transparent;color:var(--mut);border:1px solid var(--line);border-radius:8px;font-weight:500}
+</style>
+</head>
+<body>
+<div class="card">
+
+  <!-- TOKEN ENTRY -->
+  <div id="tokenView">
+    <h1>Admin</h1>
+    <p class="sub">Enter your admin token to view pending approvals.</p>
+    <label for="tokenInput">Admin token</label>
+    <input id="tokenInput" type="password" placeholder="paste token here" autocomplete="off" />
+    <button id="connectBtn">Connect</button>
+    <p class="msg err" id="tokenMsg"></p>
+  </div>
+
+  <!-- PENDING LIST -->
+  <div id="listView" class="hidden">
+    <div class="toolbar">
+      <h1>Pending approvals</h1>
+      <button class="refresh" id="refreshBtn">Refresh</button>
+    </div>
+    <p class="msg err hidden" id="listErr"></p>
+    <div id="list"></div>
+  </div>
+
+</div>
+
+<script>
+  const BACKEND_URL = "http://127.0.0.1:8000";
+
+  const $ = (id) => document.getElementById(id);
+  let token = "";
+
+  // ---- token entry ----
+  $("tokenInput").addEventListener("keydown", (e) => { if (e.key === "Enter") $("connectBtn").click(); });
+
+  $("connectBtn").onclick = async () => {
+    const t = $("tokenInput").value.trim();
+    if (!t) { $("tokenMsg").textContent = "Enter the admin token."; return; }
+    $("tokenMsg").textContent = "";
+    $("connectBtn").disabled = true;
+    $("connectBtn").textContent = "Connecting…";
+    try {
+      const users = await fetchPending(t);
+      token = t;
+      $("tokenView").classList.add("hidden");
+      $("listView").classList.remove("hidden");
+      renderList(users);
+    } catch (e) {
+      $("tokenMsg").textContent = e.message;
+    } finally {
+      $("connectBtn").disabled = false;
+      $("connectBtn").textContent = "Connect";
+    }
+  };
+
+  // ---- list view ----
+  $("refreshBtn").onclick = async () => {
+    $("refreshBtn").disabled = true;
+    $("listErr").classList.add("hidden");
+    try {
+      const users = await fetchPending(token);
+      renderList(users);
+    } catch (e) {
+      showListErr(e.message);
+    } finally {
+      $("refreshBtn").disabled = false;
+    }
+  };
+
+  async function fetchPending(tok) {
+    const res = await fetch(BACKEND_URL + "/admin/pending", {
+      headers: { "X-Admin-Token": tok },
+    });
+    const body = await res.json();
+    if (res.status === 401) throw new Error("Invalid token.");
+    if (!res.ok) throw new Error(body.detail || "Request failed (" + res.status + ")");
+    return body;
+  }
+
+  function renderList(users) {
+    const list = $("list");
+    list.innerHTML = "";
+    if (!users.length) {
+      list.innerHTML = '<p class="empty">No pending users — all caught up.</p>';
+      return;
+    }
+    users.forEach((u) => list.appendChild(makeRow(u)));
+  }
+
+  function makeRow(u) {
+    const div = document.createElement("div");
+    div.className = "user-row";
+    div.id = "row-" + u.user_id;
+
+    const time = u.created_at
+      ? new Date(u.created_at).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })
+      : "—";
+
+    const ipLine = u.ip_address ? esc(u.ip_address) : "IP unknown";
+    const ipWarn = (u.ip_count > 1)
+      ? `<div class="ip-warn">⚠ ${esc(String(u.ip_count))} accounts from this IP</div>`
+      : "";
+
+    div.innerHTML = `
+      <div class="user-info">
+        <div class="user-name">${esc(u.name || "(no name)")}</div>
+        <div class="user-id">${esc(u.identifier)}</div>
+        <div class="user-time">Signed up ${esc(time)}</div>
+        <div class="user-ip">${ipLine}</div>
+        ${ipWarn}
+        <div class="row-msg" id="msg-${esc(u.user_id)}"></div>
+      </div>
+      <button class="approve" id="btn-${esc(u.user_id)}">Approve</button>
+    `;
+
+    div.querySelector(".approve").onclick = () => approveUser(u.user_id);
+    return div;
+  }
+
+  async function approveUser(userId) {
+    const btn = $("btn-" + userId);
+    const msg = $("msg-" + userId);
+    btn.disabled = true;
+    btn.textContent = "…";
+    msg.className = "row-msg";
+    msg.textContent = "";
+    try {
+      const res = await fetch(BACKEND_URL + "/admin/approve", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Admin-Token": token },
+        body: JSON.stringify({ user_id: userId }),
+      });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.detail || "Failed (" + res.status + ")");
+      // success — fade the row out then remove it
+      const row = $("row-" + userId);
+      row.style.transition = "opacity .35s";
+      row.style.opacity = "0";
+      setTimeout(() => {
+        row.remove();
+        if (!$("list").querySelector(".user-row")) {
+          $("list").innerHTML = '<p class="empty">No pending users — all caught up.</p>';
+        }
+      }, 380);
+    } catch (e) {
+      msg.className = "row-msg err";
+      msg.textContent = e.message;
+      btn.disabled = false;
+      btn.textContent = "Approve";
+    }
+  }
+
+  function showListErr(text) {
+    const el = $("listErr");
+    el.textContent = text;
+    el.classList.remove("hidden");
+  }
+
+  function esc(s) {
+    return String(s)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+  }
+</script>
+</body>
+</html>

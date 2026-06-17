@@ -1,0 +1,33 @@
+.home-starfield-container {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 50vh; /* Restrict to the top section above Welcome text */
+  /* Fade out smoothly towards the bottom and sides */
+  -webkit-mask-image: radial-gradient(ellipse 200% 150% at 50% 0%, rgba(0, 0, 0, 1) 0%, rgba(0, 0, 0, 0) 100%);
+  mask-image: radial-gradient(ellipse 200% 150% at 50% 0%, rgba(0, 0, 0, 1) 0%, rgba(0, 0, 0, 0) 100%);
+  pointer-events: none;
+  z-index: 0;
+}
+
+.star-svg {
+  position: absolute;
+  color: white;
+  will-change: opacity, transform;
+}
+
+.star-svg.twinkling {
+  animation: twinkle var(--twinkle-duration) infinite ease-in-out var(--twinkle-delay);
+}
+
+@keyframes twinkle {
+  0%, 100% { 
+    opacity: calc(var(--base-opacity) * 0.4); 
+    transform: scale(0.8); 
+  }
+  50% { 
+    opacity: calc(var(--base-opacity) * 1.8); 
+    transform: scale(1.3); 
+  }
+}

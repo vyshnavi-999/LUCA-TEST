@@ -1,0 +1,53 @@
+# --- secrets (NEVER commit) ---
+.env
+.env.*
+!.env.example
+*.pem
+
+# --- node ---
+node_modules/
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+venv/
+.venv/
+env/
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# --- audio / test recordings ---
+*.wav
+*.mp3
+*.webm
+*.ogg
+*.flac
+*.m4a
+*.aac
+test_audio/
+test_recordings/
+recordings/
+
+# --- OS noise ---
+.DS_Store
+Thumbs.db
+
+# --- IDE ---
+.vscode/
+.idea/
+
+# --- load-test scripts and output ---
+backend/loadtest.py
+llm_load_test.py
+llm_tts_load_test.py
+*.csv
+*_results*.json
+*_runs*.json
+
+# --- Claude Code project settings ---
+.claude/

@@ -1,0 +1,310 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Voice capture &mdash; Phase 1</title>
+<style>
+  :root{--bg:#0e1116;--panel:#171b22;--line:#262c36;--ink:#e8ebf0;--mut:#8a93a3;--accent:#5ad19a;--rec:#ff5d5d}
+  *{box-sizing:border-box}
+  body{margin:0;min-height:100vh;background:var(--bg);color:var(--ink);font:15px/1.5 ui-sans-serif,system-ui,-apple-system,sans-serif;display:grid;place-items:center;padding:24px}
+  .card{width:100%;max-width:440px;background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:28px}
+  h1{font-size:18px;margin:0 0 4px;letter-spacing:-.01em}
+  .sub{color:var(--mut);font-size:13px;margin:0 0 22px}
+  label{display:block;font-size:12px;color:var(--mut);margin:14px 0 6px}
+  .hint{font-size:11px;color:var(--mut);margin-top:4px}
+  input{width:100%;padding:11px 12px;background:#0e1116;color:var(--ink);border:1px solid var(--line);border-radius:9px;font-size:15px}
+  button{width:100%;margin-top:16px;padding:12px;border:0;border-radius:9px;background:var(--accent);color:#062017;font-weight:600;font-size:15px;cursor:pointer}
+  button.ghost{background:transparent;color:var(--mut);border:1px solid var(--line);font-weight:500}
+  .hidden{display:none}
+  .row{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:18px}
+  .who{font-size:12px;color:var(--mut);word-break:break-all}
+  .who button{width:auto;margin:0;padding:7px 11px;font-size:12px}
+  .mic{width:96px;height:96px;border-radius:50%;margin:8px auto 0;display:grid;place-items:center;background:#0e1116;border:1px solid var(--line);cursor:pointer;font-size:34px;transition:transform .1s ease}
+  .mic:active{transform:scale(.96)}
+  .mic.rec{border-color:var(--rec);animation:pulse 1.1s ease-in-out infinite}
+  @keyframes pulse{0%,100%{box-shadow:0 0 0 0 rgba(255,93,93,0)}50%{box-shadow:0 0 0 10px rgba(255,93,93,.18)}}
+  .status{text-align:center;color:var(--mut);font-size:13px;min-height:18px;margin:14px 0 0}
+  .out{margin-top:18px;padding:14px;background:#0e1116;border:1px solid var(--line);border-radius:10px;font-size:15px;min-height:48px;white-space:pre-wrap}
+  #transcript:empty::before{content:"Your transcript will appear here.";color:var(--mut)}
+  .out-label{font-size:12px;color:var(--mut);margin:14px 0 6px}
+  .note{font-size:12px;color:var(--mut);font-style:italic;margin-top:6px}
+  .audio-row{display:flex;align-items:center;gap:10px;margin-top:10px}
+  .play-btn{width:auto;margin:0;padding:9px 16px;font-size:13px}
+  .tts-note{font-size:11px;color:var(--mut);font-style:italic;margin-top:5px}
+
+  @media (prefers-reduced-motion:reduce){.mic.rec{animation:none}}
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>Voice capture</h1>
+  <p class="sub">Phase 1 &mdash; sign in, record, transcribe, store.</p>
+
+  <!-- LOGIN (self-identify, no password) -->
+  <div id="loginView">
+    <label for="identifier">Phone number or email</label>
+    <input id="identifier" type="text" placeholder="9876543210 or you@example.com" />
+    <label for="name">Name <span class="hint">(only needed the first time)</span></label>
+    <input id="name" type="text" placeholder="Your name" />
+    <button id="continueBtn">Continue</button>
+    <p class="status" id="loginStatus"></p>
+  </div>
+
+  <!-- APP -->
+  <div id="appView" class="hidden">
+    <div class="row">
+      <span class="who" id="whoami"></span>
+      <button class="ghost" id="switchBtn">Switch user</button>
+    </div>
+    <div class="mic" id="micBtn" role="button" aria-label="Record">&#127897;&#65039;</div>
+    <p class="status" id="recStatus">Tap the mic to start recording.</p>
+    <div class="out" id="transcript"></div>
+    <div id="assistantSection" class="hidden">
+      <p class="out-label">Assistant</p>
+      <div class="out" id="assistantOut"></div>
+      <div id="audioSection" class="hidden">
+        <audio id="replyAudio" preload="auto"></audio>
+        <div class="audio-row">
+          <button class="ghost play-btn" id="playBtn">&#9654; Play reply</button>
+        </div>
+      </div>
+      <p class="tts-note hidden" id="ttsFailNote">audio unavailable</p>
+      <p class="note hidden" id="replyUnavail">Reply unavailable.</p>
+    </div>
+  </div>
+</div>
+
+<script>
+  // ---- CONFIG: set your backend URL ----
+  const BACKEND_URL = "http://127.0.0.1:8000";
+  // --------------------------------------
+
+  const $ = (id) => document.getElementById(id);
+
+  // ---------- LOGIN (lookup-or-create on phone/email) ----------
+  $("continueBtn").onclick = async () => {
+    const identifier = $("identifier").value.trim();
+    const name = $("name").value.trim();
+    if (!identifier) { $("loginStatus").textContent = "Enter a phone number or email."; return; }
+    $("loginStatus").textContent = "Signing in…";
+    try {
+      const res = await fetch(BACKEND_URL + "/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name, identifier }),
+      });
+      const out = await res.json();
+      if (!res.ok) { $("loginStatus").textContent = out.detail || "Login failed"; return; }
+      // remember in the browser so they don't retype next time
+      localStorage.setItem("vc_user_id", out.user_id);
+      localStorage.setItem("vc_identifier", out.identifier);
+      localStorage.setItem("vc_name", out.name || "");
+      if (!out.approved) {
+        $("loginStatus").textContent = "Your account is pending approval — please wait for the team";
+        return;
+      }
+      showApp();
+    } catch (e) {
+      $("loginStatus").textContent = "Could not reach the backend.";
+    }
+  };
+
+  $("switchBtn").onclick = () => {
+    localStorage.removeItem("vc_user_id");
+    localStorage.removeItem("vc_identifier");
+    localStorage.removeItem("vc_name");
+    location.reload();
+  };
+
+  function showApp() {
+    $("loginView").classList.add("hidden");
+    $("appView").classList.remove("hidden");
+    const idr = localStorage.getItem("vc_identifier") || "";
+    const nm = localStorage.getItem("vc_name") || "";
+    $("whoami").textContent = nm ? (nm + " · " + idr) : idr;
+  }
+  // auto sign-in if we already know this browser's user
+  if (localStorage.getItem("vc_user_id")) showApp();
+
+  // ---------- RECORD + UPLOAD ----------
+  let recorder, chunks = [], recording = false;
+
+  $("micBtn").onclick = async () => {
+    if (!recording) {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        recorder = new MediaRecorder(stream);
+        chunks = [];
+        recorder.ondataavailable = (e) => chunks.push(e.data);
+        recorder.onstop = () => { stream.getTracks().forEach(t => t.stop()); upload(); };
+        recorder.start();
+        recording = true;
+        $("micBtn").classList.add("rec");
+        $("recStatus").textContent = "Recording… tap to stop.";
+      } catch (e) {
+        $("recStatus").textContent = "Mic blocked. Allow microphone access and use https or localhost.";
+      }
+    } else {
+      recorder.stop();
+      recording = false;
+      $("micBtn").classList.remove("rec");
+      $("recStatus").textContent = "Uploading & transcribing…";
+    }
+  };
+
+  async function upload() {
+    const blob = new Blob(chunks, { type: "audio/webm" });
+    const userId = localStorage.getItem("vc_user_id");
+    if (!userId) { $("recStatus").textContent = "Sign in again."; return; }
+
+    // Reset UI state from any previous recording.
+    $("transcript").textContent = "";
+    $("assistantSection").classList.add("hidden");
+    $("ttsFailNote").classList.add("hidden");
+    $("replyUnavail").classList.add("hidden");
+
+    const form = new FormData();
+    form.append("audio", blob, "clip.webm");
+    form.append("user_id", userId);
+
+    try {
+      $("recStatus").textContent = "Transcribing…";
+      const res = await fetch(BACKEND_URL + "/transcribe_stream", { method: "POST", body: form });
+
+      if (!res.ok) {
+        const out = await res.json().catch(() => ({}));
+        $("recStatus").textContent = "Error: " + (out.detail || res.status);
+        return;
+      }
+
+      const ct = res.headers.get("Content-Type") || "";
+
+      if (ct.includes("application/json")) {
+        // TTS failed — backend returned JSON with text but no audio.
+        const out = await res.json();
+        $("transcript").textContent = out.transcript || "(empty transcript)";
+        $("recStatus").textContent = "Saved." + (out.language ? " (" + out.language + ")" : "");
+        if (out.reply) {
+          $("assistantSection").classList.remove("hidden");
+          $("assistantOut").textContent = out.reply;
+          $("ttsFailNote").classList.remove("hidden");
+          $("audioSection").classList.add("hidden");
+        }
+        return;
+      }
+
+      // Streaming audio/mpeg — read custom headers while body is still arriving.
+      const transcript = decodeURIComponent(res.headers.get("X-Transcript") || "");
+      const reply      = decodeURIComponent(res.headers.get("X-Reply")      || "");
+
+      $("transcript").textContent = transcript || "(empty transcript)";
+      $("recStatus").textContent  = "Streaming reply…";
+
+      if (reply) {
+        $("assistantSection").classList.remove("hidden");
+        $("assistantOut").textContent = reply;
+        await _streamAudio(res);
+        $("recStatus").textContent = "Done.";
+      } else {
+        $("assistantSection").classList.add("hidden");
+        $("recStatus").textContent = "Saved.";
+        // drain the body so the connection closes cleanly
+        await res.body.getReader().read();
+      }
+    } catch (e) {
+      $("recStatus").textContent = "Could not reach the backend.";
+    }
+  }
+
+  // Wire play/pause button and audio events. Call before setting audio.src.
+  function _wirePlayBtn(audio) {
+    const btn = $("playBtn");
+    btn.textContent   = "▶ Play reply";
+    audio.onplay      = () => { btn.textContent = "⏸ Pause"; };
+    audio.onpause     = () => { btn.textContent = audio.ended ? "↩ Replay" : "▶ Play reply"; };
+    audio.onended     = () => { btn.textContent = "↩ Replay"; };
+    btn.onclick = () => {
+      if (!audio.paused) { audio.pause(); return; }
+      if (audio.ended) audio.currentTime = 0;
+      audio.play().catch(() => {});
+    };
+  }
+
+  async function _streamAudio(res) {
+    const audio = $("replyAudio");
+    audio.pause();
+    _wirePlayBtn(audio);
+    $("audioSection").classList.remove("hidden");
+
+    // MediaSource progressive playback — starts as chunks arrive.
+    if (typeof MediaSource !== "undefined" && MediaSource.isTypeSupported("audio/mpeg")) {
+      const ms    = new MediaSource();
+      const msUrl = URL.createObjectURL(ms);
+      audio.src   = msUrl;
+
+      // sourceopen fires once the element has accepted the object URL.
+      await new Promise(resolve => ms.addEventListener("sourceopen", resolve, { once: true }));
+      URL.revokeObjectURL(msUrl);
+
+      const sb     = ms.addSourceBuffer("audio/mpeg");
+      const reader = res.body.getReader();
+
+      const waitUpdate = () =>
+        new Promise((ok, fail) => {
+          sb.addEventListener("updateend", ok,   { once: true });
+          sb.addEventListener("error",     fail, { once: true });
+        });
+
+      // Autoplay once the browser has buffered enough.
+      audio.addEventListener("canplay", function once() {
+        audio.removeEventListener("canplay", once);
+        audio.play().catch(() => {});
+      }, { once: true });
+
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          if (sb.updating) await waitUpdate();
+          sb.appendBuffer(value);
+          await waitUpdate();
+        }
+        if (!sb.updating) ms.endOfStream();
+        else sb.addEventListener("updateend", () => ms.endOfStream(), { once: true });
+      } catch (e) {
+        if (ms.readyState === "open") ms.endOfStream("decode");
+      }
+      return;
+    }
+
+    // Fallback: collect all chunks then play (for browsers without MSE MP3 support).
+    const reader = res.body.getReader();
+    const parts  = [];
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      parts.push(value);
+    }
+    const blobUrl = URL.createObjectURL(new Blob(parts, { type: "audio/mpeg" }));
+    audio.src = blobUrl;
+    audio.addEventListener("canplay", function once() {
+      audio.removeEventListener("canplay", once);
+      audio.play().catch(() => {});
+    }, { once: true });
+  }
+
+  function showReplyAudio(url) {
+    const audio = $("replyAudio");
+    audio.pause();
+    _wirePlayBtn(audio);
+    audio.src = url;
+    $("audioSection").classList.remove("hidden");
+    audio.addEventListener("canplay", function once() {
+      audio.removeEventListener("canplay", once);
+      audio.play().catch(() => {});
+    }, { once: true });
+  }
+</script>
+</body>
+</html>
