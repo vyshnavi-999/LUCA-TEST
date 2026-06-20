@@ -50,6 +50,7 @@ SARVAM_TTS_API_KEY = os.environ.get("SARVAM_TTS_API_KEY", "")
 TTS_MODEL = os.environ.get("TTS_MODEL", "bulbul:v3")
 TTS_SPEAKER = os.environ.get("TTS_SPEAKER", "shubh")
 TTS_SAMPLE_RATE = int(os.environ.get("TTS_SAMPLE_RATE", "24000"))
+ACTIVE_CLASS = os.environ.get("ACTIVE_CLASS", "")  # class that gets full ASR/LLM/TTS; restart backend after changing in .env
 
 SYSTEM_PROMPT = (
     "You are LUCA, made by 10x Technologies. LUCA stands for Language Understanding Companion Assistant. "
@@ -124,8 +125,8 @@ def _login(name, identifier, id_type, ip_address, class_standard):
             if row:
                 return str(row[0]), row[1], bool(row[2])   # existing user; name NOT overwritten
             cur.execute(
-                "insert into users (name, identifier, id_type, ip_address, class_standard)"
-                " values (%s, %s, %s, %s, %s) returning user_id, name, approved",
+                "insert into users (name, identifier, id_type, ip_address, class_standard, approved)"
+                " values (%s, %s, %s, %s, %s, true) returning user_id, name, approved",
                 (name, identifier, id_type, ip_address, class_standard),
             )
             new = cur.fetchone()
@@ -133,12 +134,13 @@ def _login(name, identifier, id_type, ip_address, class_standard):
         return str(new[0]), new[1], bool(new[2])
 
 
-def _user_approved(user_id) -> bool:
+def _get_user_class(user_id) -> str | None:
+    """Returns class_standard if user exists, None if not found."""
     with psycopg.connect(DATABASE_URL) as conn:
         with conn.cursor() as cur:
-            cur.execute("select approved from users where user_id = %s", (user_id,))
+            cur.execute("select class_standard from users where user_id = %s", (user_id,))
             row = cur.fetchone()
-            return bool(row[0]) if row else False
+            return row[0] if row else None
 
 
 def _user_exists(user_id) -> bool:
@@ -322,8 +324,6 @@ async def transcribe_endpoint(audio: UploadFile = File(...), user_id: str = Form
         raise HTTPException(status_code=400, detail="Bad user_id")
     if not await run_in_threadpool(_user_exists, uid):
         raise HTTPException(status_code=401, detail="Unknown user — sign in again")
-    if not await run_in_threadpool(_user_approved, uid):
-        raise HTTPException(status_code=403, detail="Not approved yet")
 
     audio_bytes = await audio.read()
     content_type = audio.content_type or "audio/webm"
@@ -460,10 +460,10 @@ async def transcribe_stream_endpoint(audio: UploadFile = File(...), user_id: str
         uid = uuid.UUID(user_id)
     except ValueError:
         raise HTTPException(status_code=400, detail="Bad user_id")
-    if not await run_in_threadpool(_user_exists, uid):
+
+    class_standard = await run_in_threadpool(_get_user_class, uid)
+    if class_standard is None:
         raise HTTPException(status_code=401, detail="Unknown user — sign in again")
-    if not await run_in_threadpool(_user_approved, uid):
-        raise HTTPException(status_code=403, detail="Not approved yet")
 
     audio_bytes = await audio.read()
     content_type = audio.content_type or "audio/webm"
@@ -481,6 +481,12 @@ async def transcribe_stream_endpoint(audio: UploadFile = File(...), user_id: str
                 detail="Daily limit reached — recording saved but not processed.",
             )
 
+    # PATH B: class not active — save audio, skip ASR/LLM/TTS
+    if class_standard != ACTIVE_CLASS and class_standard != "Staff":
+        await save_recording(uid, audio_key, "", None, "recorded_only")
+        return JSONResponse({"status": "recorded_only"})
+
+    # PATH A: active class or Staff — full pipeline
     try:
         text, language = await transcribe(audio_bytes, audio.filename or "clip.webm", content_type)
     except HTTPException:
@@ -564,59 +570,4 @@ async def transcribe_stream_endpoint(audio: UploadFile = File(...), user_id: str
         },
     )
 
-
-
-# ---------- admin ----------
-def _check_admin(token: str):
-    if not ADMIN_TOKEN or token != ADMIN_TOKEN:
-        raise HTTPException(status_code=401, detail="Invalid admin token")
-
-
-def _get_pending_users():
-    with psycopg.connect(DATABASE_URL) as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                """select u.user_id, u.name, u.identifier, u.created_at, u.ip_address,
-                          case when u.ip_address is not null
-                               then (select count(*) from users u2
-                                     where u2.ip_address = u.ip_address)
-                               else 1
-                          end as ip_count
-                   from users u
-                   where u.approved = false
-                   order by u.created_at"""
-            )
-            return [
-                {"user_id": str(r[0]), "name": r[1], "identifier": r[2],
-                 "created_at": r[3].isoformat(), "ip_address": r[4], "ip_count": r[5]}
-                for r in cur.fetchall()
-            ]
-
-
-def _approve_user(user_id):
-    with psycopg.connect(DATABASE_URL) as conn:
-        with conn.cursor() as cur:
-            cur.execute("update users set approved = true where user_id = %s", (user_id,))
-        conn.commit()
-
-
-class ApproveIn(BaseModel):
-    user_id: str
-
-
-@app.get("/admin/pending")
-async def admin_pending(x_admin_token: str = Header(...)):
-    _check_admin(x_admin_token)
-    return await run_in_threadpool(_get_pending_users)
-
-
-@app.post("/admin/approve")
-async def admin_approve(body: ApproveIn, x_admin_token: str = Header(...)):
-    _check_admin(x_admin_token)
-    try:
-        uid = uuid.UUID(body.user_id)
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Bad user_id")
-    await run_in_threadpool(_approve_user, uid)
-    return {"ok": True, "user_id": str(uid)}
 

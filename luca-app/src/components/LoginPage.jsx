@@ -53,12 +53,6 @@ const LoginPage = ({ onLogin }) => {
         return;
       }
 
-      if (!data.approved) {
-        setError('Your account is pending approval — please wait for the team.');
-        setLoading(false);
-        return;
-      }
-
       // Persist session
       const user = {
         fullName:     data.name || fullName.trim(),

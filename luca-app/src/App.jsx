@@ -367,9 +367,14 @@ function App() {
 
       const ct = res.headers.get('Content-Type') || '';
 
-      // TTS failed — backend sent JSON fallback
+      // JSON response — recorded_only (inactive class) or TTS fallback
       if (ct.includes('application/json')) {
         const data = await res.json();
+        if (data.status === 'recorded_only') {
+          setIsLoading(false);
+          setIsChatMode(false);
+          return;
+        }
         setMessages([
           { role: 'user', content: data.transcript || '(empty transcript)' },
           { role: 'ai',   content: data.reply      || 'Reply unavailable.'  },
