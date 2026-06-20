@@ -157,6 +157,7 @@ function App() {
   const mediaRecorderRef   = useRef(null);
   const chunksRef          = useRef([]);
   const micStreamRef       = useRef(null);
+  const currentAudioRef    = useRef(null);
 
   // ── Restore session from localStorage ──────────────────────────────────
   useEffect(() => {
@@ -392,9 +393,27 @@ function App() {
   };
 
   // ── On-demand TTS (click-to-play) ────────────────────────────────────────
+  const _stopCurrentAudio = () => {
+    if (currentAudioRef.current) {
+      currentAudioRef.current.pause();
+      currentAudioRef.current.currentTime = 0;
+      currentAudioRef.current = null;
+    }
+  };
+
+  const _playAudioUrl = (url) => {
+    _stopCurrentAudio();
+    const audioEl = new Audio(url);
+    currentAudioRef.current = audioEl;
+    audioEl.addEventListener('ended', () => {
+      if (currentAudioRef.current === audioEl) currentAudioRef.current = null;
+    });
+    audioEl.play().catch(() => {});
+  };
+
   const _playTTS = async (text, language, idx) => {
     if (audioCache[idx]) {
-      new Audio(audioCache[idx]).play().catch(() => {});
+      _playAudioUrl(audioCache[idx]);
       return;
     }
     setTtsLoading(prev => ({ ...prev, [idx]: true }));
@@ -416,7 +435,7 @@ function App() {
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
       setAudioCache(prev => ({ ...prev, [idx]: url }));
-      new Audio(url).play().catch(() => {});
+      _playAudioUrl(url);
     } catch (e) {
       console.error('TTS fetch error:', e);
     } finally {
