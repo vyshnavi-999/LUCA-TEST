@@ -481,13 +481,6 @@ function App() {
               </button>
             )}
 
-            {/* Sign-out */}
-            {!isVoiceMode && (
-              <button className="signout-btn" onClick={handleLogout}>
-                Sign out
-              </button>
-            )}
-
             {/* Center content — always in DOM, hidden via opacity when in chat */}
             <div
               className="center-content"

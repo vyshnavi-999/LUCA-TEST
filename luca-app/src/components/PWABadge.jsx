@@ -21,7 +21,7 @@ export function PWABadge() {
     setNeedRefresh(false);
   };
 
-  if (!offlineReady && !needRefresh) {
+  if (!needRefresh) {
     return null;
   }
 
