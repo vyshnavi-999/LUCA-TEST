@@ -1,0 +1,30 @@
+.home-starfield-container {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100vh; /* Always span 100vh */
+  pointer-events: none;
+  z-index: 0;
+  transition: mask-image 0.5s ease, -webkit-mask-image 0.5s ease;
+}
+
+.home-starfield-container.masked {
+  /* Fade out smoothly at 50vh (50% of the 100vh container) */
+  -webkit-mask-image: radial-gradient(ellipse 200% 100% at 50% 0%, rgba(0, 0, 0, 1) 0%, rgba(0, 0, 0, 0) 50%);
+  mask-image: radial-gradient(ellipse 200% 100% at 50% 0%, rgba(0, 0, 0, 1) 0%, rgba(0, 0, 0, 0) 50%);
+}
+
+.home-starfield-container.full-screen {
+  -webkit-mask-image: none;
+  mask-image: none;
+}
+
+.star-svg {
+  position: absolute;
+  color: white;
+}
+
+.star-svg.glow {
+  filter: drop-shadow(0 0 2px rgba(255, 255, 255, 0.8));
+}
