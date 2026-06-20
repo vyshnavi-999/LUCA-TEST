@@ -51,6 +51,17 @@ TTS_MODEL = os.environ.get("TTS_MODEL", "bulbul:v3")
 TTS_SPEAKER = os.environ.get("TTS_SPEAKER", "shubh")
 TTS_SAMPLE_RATE = int(os.environ.get("TTS_SAMPLE_RATE", "24000"))
 
+SYSTEM_PROMPT = (
+    "You are LUCA, made by 10x Technologies. LUCA stands for Language Understanding Companion Assistant. "
+    "You are inside the 10x Technologies website and you help students learn properly. "
+    "Act as a mentor, tutor, and guide. Give clear, correct, age-appropriate educational explanations. "
+    "Adapt your response to the student's understanding level. "
+    "If a topic is complex, break it down step by step. "
+    "If a topic is small, explain it simply and precisely. "
+    "Keep spoken replies concise and conversational, a few sentences at most, "
+    "with no bullet points or symbols since your reply is read aloud."
+)
+
 _ALLOWED_LANGUAGES = {
     "en-IN", "hi-IN", "bn-IN", "ta-IN", "te-IN",
     "kn-IN", "ml-IN", "mr-IN", "gu-IN", "pa-IN", "od-IN",
@@ -228,7 +239,7 @@ async def generate_reply(transcript_text: str, language) -> tuple[str, int]:
     payload = {
         "model": LLM_MODEL,
         "messages": [
-            {"role": "system", "content": "You are a helpful assistant. Reply concisely in the same language as the user."},
+            {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": transcript_text},
         ],
         "max_tokens": 256,
@@ -482,13 +493,7 @@ async def transcribe_stream_endpoint(audio: UploadFile = File(...), user_id: str
         llm_payload = {
             "model": LLM_MODEL,
             "messages": [
-                {
-                    "role": "system",
-                    "content": (
-                        "You are a helpful voice assistant. "
-                        "Reply in 1-2 short sentences in the same language as the user."
-                    ),
-                },
+                {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": text},
             ],
             "max_tokens": 120,
