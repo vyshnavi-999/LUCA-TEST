@@ -339,6 +339,49 @@
   align-self: flex-start;
   background-color: transparent;
   color: var(--text-main);
+  display: flex;
+  align-items: flex-start;
+  gap: 0.6rem;
+}
+
+.message.ai span {
+  flex: 1;
+}
+
+/* TTS speaker button */
+.tts-btn {
+  flex-shrink: 0;
+  margin-top: 0.15rem;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0.25rem;
+  color: rgba(255, 255, 255, 0.45);
+  border-radius: 50%;
+  transition: color 0.2s ease, background 0.2s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.tts-btn:hover:not(:disabled) {
+  color: rgba(255, 255, 255, 0.9);
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.tts-btn:disabled,
+.tts-btn--disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+@keyframes tts-spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+
+.tts-spinner {
+  animation: tts-spin 1s linear infinite;
 }
 
 /* Voice Mode Top Bar */

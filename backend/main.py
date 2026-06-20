@@ -29,11 +29,10 @@ import httpx
 import psycopg
 from pydantic import BaseModel
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Header, Request
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse, Response
 from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
-from urllib.parse import quote
 load_dotenv()
 
 AWS_REGION = os.environ.get("AWS_REGION", "ap-south-1")
@@ -50,7 +49,9 @@ SARVAM_TTS_API_KEY = os.environ.get("SARVAM_TTS_API_KEY", "")
 TTS_MODEL = os.environ.get("TTS_MODEL", "bulbul:v3")
 TTS_SPEAKER = os.environ.get("TTS_SPEAKER", "shubh")
 TTS_SAMPLE_RATE = int(os.environ.get("TTS_SAMPLE_RATE", "24000"))
-ACTIVE_CLASS = os.environ.get("ACTIVE_CLASS", "")  # class that gets full ASR/LLM/TTS; restart backend after changing in .env
+ACTIVE_CLASS       = os.environ.get("ACTIVE_CLASS", "")  # class that gets full ASR/LLM/TTS; restart backend after changing in .env
+GOOGLE_TTS_API_KEY = os.environ.get("GOOGLE_TTS_API_KEY", "")
+TTS_ENABLED        = os.environ.get("TTS_ENABLED", "true")
 
 SYSTEM_PROMPT = (
     "You are LUCA, made by 10x Technologies. LUCA stands for Language Understanding Companion Assistant. "
@@ -68,22 +69,42 @@ _ALLOWED_LANGUAGES = {
     "kn-IN", "ml-IN", "mr-IN", "gu-IN", "pa-IN", "od-IN",
 }
 
+# Chirp 3 HD preferred; verify at https://cloud.google.com/text-to-speech/docs/voices
+_GOOGLE_VOICES: dict[str, tuple[str, str]] = {
+    "en-IN": ("en-IN", "en-IN-Chirp3-HD-Aoede"),
+    "hi-IN": ("hi-IN", "hi-IN-Chirp3-HD-Aoede"),
+    "bn-IN": ("bn-IN", "bn-IN-Chirp3-HD-Aoede"),
+    "ta-IN": ("ta-IN", "ta-IN-Chirp3-HD-Aoede"),
+    "te-IN": ("te-IN", "te-IN-Chirp3-HD-Aoede"),
+    "kn-IN": ("kn-IN", "kn-IN-Chirp3-HD-Aoede"),
+    "ml-IN": ("ml-IN", "ml-IN-Chirp3-HD-Aoede"),
+    "mr-IN": ("mr-IN", "mr-IN-Chirp3-HD-Aoede"),
+    "gu-IN": ("gu-IN", "gu-IN-Chirp3-HD-Aoede"),
+    "pa-IN": ("pa-IN", "pa-IN-Standard-A"),     # Chirp 3 HD not available; Standard fallback
+    "od-IN": ("od-IN", "od-IN-Standard-A"),     # Chirp 3 HD not available; Standard fallback
+}
+_GOOGLE_VOICE_DEFAULT = ("en-IN", "en-IN-Chirp3-HD-Aoede")
+
 s3 = boto3.client("s3", region_name=AWS_REGION)
 
 _HTTP_LIMITS = httpx.Limits(max_connections=200, max_keepalive_connections=50)
 
-_sarvam_client: httpx.AsyncClient | None = None
-_llm_client: httpx.AsyncClient | None = None
+_sarvam_client:     httpx.AsyncClient | None = None
+_llm_client:        httpx.AsyncClient | None = None
+_google_tts_client: httpx.AsyncClient | None = None
 
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
-    global _sarvam_client, _llm_client
-    _sarvam_client = httpx.AsyncClient(limits=_HTTP_LIMITS, timeout=60.0)
-    _llm_client = httpx.AsyncClient(limits=_HTTP_LIMITS, timeout=60.0)
+    global _sarvam_client, _llm_client, _google_tts_client
+    _sarvam_client     = httpx.AsyncClient(limits=_HTTP_LIMITS, timeout=60.0)
+    _llm_client        = httpx.AsyncClient(limits=_HTTP_LIMITS, timeout=60.0)
+    _google_tts_client = httpx.AsyncClient(limits=_HTTP_LIMITS, timeout=30.0)
+    await run_in_threadpool(_ensure_tts_usage_table)
     yield
     await _sarvam_client.aclose()
     await _llm_client.aclose()
+    await _google_tts_client.aclose()
 
 
 app = FastAPI(title="Voice Phase 1 (no auth)", lifespan=lifespan)
@@ -311,6 +332,55 @@ async def save_recording(user_id, audio_key, text, language, status,
         raise HTTPException(status_code=500, detail=f"DB insert failed: {e}")
 
 
+def _ensure_tts_usage_table():
+    with psycopg.connect(DATABASE_URL) as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS tts_usage (
+                    id         SERIAL PRIMARY KEY,
+                    user_id    UUID NOT NULL REFERENCES users(user_id),
+                    language   TEXT,
+                    char_count INTEGER NOT NULL,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+                )
+            """)
+        conn.commit()
+
+
+def _insert_tts_usage(user_id, language, char_count):
+    with psycopg.connect(DATABASE_URL) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO tts_usage (user_id, language, char_count) VALUES (%s, %s, %s)",
+                (user_id, language, char_count),
+            )
+        conn.commit()
+
+
+def _get_tts_usage():
+    with psycopg.connect(DATABASE_URL) as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT COALESCE(SUM(char_count), 0) FROM tts_usage")
+            total = cur.fetchone()[0]
+            cur.execute("""
+                SELECT u.name, u.identifier, t.language,
+                       SUM(t.char_count) AS chars, COUNT(*) AS calls
+                FROM tts_usage t
+                JOIN users u ON u.user_id = t.user_id
+                GROUP BY u.user_id, u.name, u.identifier, t.language
+                ORDER BY chars DESC
+            """)
+            rows = cur.fetchall()
+        return {
+            "total_chars": int(total),
+            "per_user_language": [
+                {"name": r[0], "identifier": r[1], "language": r[2],
+                 "char_count": r[3], "calls": r[4]}
+                for r in rows
+            ],
+        }
+
+
 @app.get("/healthz")
 async def healthz():
     return {"ok": True, "daily_limit": DAILY_LIMIT}
@@ -394,66 +464,6 @@ async def transcribe_endpoint(audio: UploadFile = File(...), user_id: str = Form
     return resp
 
 
-# ---------- streaming TTS reply (binary MP3 forwarded directly to browser) ----------
-
-_TTS_STREAM_URL = "https://api.sarvam.ai/text-to-speech/stream"
-
-# Language-appropriate speakers for bulbul:v3 (per Sarvam recommendations).
-_LANG_SPEAKER: dict[str, str] = {
-    "en-IN": "neha",
-    "hi-IN": "ritu",
-    "bn-IN": "roopa",
-    "ta-IN": "kavitha",
-    "te-IN": "shruti",
-    "kn-IN": "shubh",
-    "ml-IN": "shubh",
-    "mr-IN": "priya",
-    "gu-IN": "manan",
-    "pa-IN": "shubh",
-    "od-IN": "shubh",
-}
-
-
-async def _open_tts_stream(payload: dict) -> httpx.Response:
-    """
-    POST to the Sarvam HTTP streaming TTS endpoint with 429/network retry.
-    Returns an open streaming response — caller MUST close it (via aclose or full read).
-    """
-    last_exc: Exception | None = None
-    r: httpx.Response | None = None
-    for attempt in range(len(_BACKOFF) + 1):
-        if r is not None:
-            await r.aclose()
-            r = None
-        try:
-            req = _sarvam_client.build_request(
-                "POST", _TTS_STREAM_URL,
-                headers={
-                    "api-subscription-key": SARVAM_TTS_API_KEY,
-                    "Content-Type": "application/json",
-                },
-                json=payload,
-            )
-            r = await _sarvam_client.send(req, stream=True)
-            last_exc = None
-        except (httpx.TimeoutException, httpx.ConnectError) as exc:
-            last_exc = exc
-            if attempt < len(_BACKOFF):
-                delay = _BACKOFF[attempt] + random.uniform(0, 0.1)
-                print(f"TTS stream {type(exc).__name__}, retry {attempt + 1}/{len(_BACKOFF)} in {delay:.1f}s", flush=True)
-                await asyncio.sleep(delay)
-            continue
-        if r.status_code != 429:
-            return r
-        if attempt < len(_BACKOFF):
-            delay = _BACKOFF[attempt] + random.uniform(0, 0.1)
-            print(f"TTS stream 429, retry {attempt + 1}/{len(_BACKOFF)} in {delay:.1f}s", flush=True)
-            await asyncio.sleep(delay)
-    if last_exc is not None:
-        raise last_exc
-    return r  # type: ignore[return-value]
-
-
 @app.post("/transcribe_stream")
 async def transcribe_stream_endpoint(audio: UploadFile = File(...), user_id: str = Form(...)):
     try:
@@ -481,7 +491,7 @@ async def transcribe_stream_endpoint(audio: UploadFile = File(...), user_id: str
                 detail="Daily limit reached — recording saved but not processed.",
             )
 
-    # PATH B: class not active — audio already on S3, log the row, skip ASR/LLM/TTS
+    # PATH B: class not active — save audio, skip ASR/LLM/TTS
     if class_standard != ACTIVE_CLASS and class_standard != "Staff":
         try:
             await save_recording(uid, audio_key, "", None, "incomplete")
@@ -489,14 +499,13 @@ async def transcribe_stream_endpoint(audio: UploadFile = File(...), user_id: str
             print(f"PATH B DB save failed (audio is on S3): {exc}", flush=True)
         return JSONResponse({"status": "recorded_only"})
 
-    # PATH A: active class or Staff — full pipeline
+    # PATH A: active class or Staff — ASR → LLM → return JSON (TTS on-demand via /tts)
     try:
         text, language = await transcribe(audio_bytes, audio.filename or "clip.webm", content_type)
     except HTTPException:
         await save_recording(uid, audio_key, "", None, "error")
         raise
 
-    # Non-streaming LLM call — short reply suitable for TTS.
     reply_text = ""
     try:
         llm_payload = {
@@ -518,59 +527,75 @@ async def transcribe_stream_endpoint(audio: UploadFile = File(...), user_id: str
         await save_recording(uid, audio_key, text, language, "llm_failed")
         raise HTTPException(status_code=502, detail="LLM call failed")
 
-    lang = language if language in _ALLOWED_LANGUAGES else "en-IN"
-    speaker = _LANG_SPEAKER.get(lang, TTS_SPEAKER)
-    tts_payload = {
-        "text": reply_text[:2500],
-        "model": "bulbul:v3",
-        "target_language_code": lang,
-        "speaker": speaker,
-        "output_audio_codec": "mp3",
-        "pace": 1.0,
-        "temperature": 0.6,
+    await save_recording(
+        uid, audio_key, text, language, "completed",
+        llm_response_text=reply_text, model_version=LLM_MODEL_VERSION,
+    )
+    return JSONResponse({
+        "transcript": text,
+        "language": language or "en-IN",
+        "reply": reply_text,
+    })
+
+
+class TTSIn(BaseModel):
+    text: str
+    user_id: str
+    language: str | None = None
+
+
+@app.post("/tts")
+async def tts_endpoint(body: TTSIn):
+    if TTS_ENABLED.lower() != "true":
+        return JSONResponse({"status": "tts_disabled", "message": "Audio is currently unavailable."})
+    if not GOOGLE_TTS_API_KEY:
+        return JSONResponse({"status": "tts_disabled", "message": "TTS not configured."})
+
+    try:
+        uid = uuid.UUID(body.user_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Bad user_id")
+
+    text = (body.text or "").strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="text is required")
+
+    lang_code, voice_name = _GOOGLE_VOICES.get(body.language or "", _GOOGLE_VOICE_DEFAULT)
+
+    google_payload = {
+        "input": {"text": text},
+        "voice": {"languageCode": lang_code, "name": voice_name},
+        "audioConfig": {"audioEncoding": "MP3"},
     }
 
-    tts_r = await _open_tts_stream(tts_payload)
-
-    if tts_r.status_code != 200:
-        error_body = await tts_r.aread()
-        await tts_r.aclose()
-        print(f"TTS stream non-200 ({tts_r.status_code}): {error_body[:300]}", flush=True)
-        await save_recording(
-            uid, audio_key, text, language, "tts_failed",
-            llm_response_text=reply_text, tokens_used=None, model_version=LLM_MODEL_VERSION,
+    try:
+        r = await _google_tts_client.post(
+            f"https://texttospeech.googleapis.com/v1/text:synthesize?key={GOOGLE_TTS_API_KEY}",
+            json=google_payload,
+            timeout=30,
         )
-        return JSONResponse({
-            "transcript": text,
-            "language": language,
-            "reply": reply_text,
-            "status": "tts_failed",
-        })
+        if r.status_code != 200:
+            raise RuntimeError(f"Google TTS returned {r.status_code}: {r.text[:200]}")
+        audio_b64 = r.json().get("audioContent", "")
+        if not audio_b64:
+            raise RuntimeError("Google TTS returned no audioContent")
+        mp3_bytes = base64.b64decode(audio_b64)
+    except Exception as exc:
+        print(f"Google TTS error: {exc}", flush=True)
+        return JSONResponse({"status": "tts_error", "message": str(exc)}, status_code=502)
 
-    # Stream binary MP3 chunks to the browser; save DB row in finally.
-    async def _audio_gen():
-        try:
-            async for chunk in tts_r.aiter_bytes(4096):
-                yield chunk
-        finally:
-            await tts_r.aclose()
-            try:
-                await run_in_threadpool(
-                    _db_insert, uid, audio_key, text, language, "completed",
-                    reply_text, None, LLM_MODEL_VERSION,
-                )
-            except Exception as exc:
-                print(f"DB save error after TTS stream: {exc}", flush=True)
+    try:
+        await run_in_threadpool(_insert_tts_usage, uid, lang_code, len(text))
+    except Exception as exc:
+        print(f"TTS usage insert failed: {exc}", flush=True)
 
-    return StreamingResponse(
-        _audio_gen(),
-        media_type="audio/mpeg",
-        headers={
-            "X-Transcript": quote(text),
-            "X-Reply": quote(reply_text),
-            "Cache-Control": "no-cache",
-            "X-Accel-Buffering": "no",
-        },
-    )
+    return Response(content=mp3_bytes, media_type="audio/mpeg")
+
+
+@app.get("/tts/usage")
+async def tts_usage_endpoint(x_admin_token: str = Header(...)):
+    if not ADMIN_TOKEN or x_admin_token != ADMIN_TOKEN:
+        raise HTTPException(status_code=401, detail="Invalid admin token")
+    return await run_in_threadpool(_get_tts_usage)
 
 

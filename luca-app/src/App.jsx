@@ -141,6 +141,11 @@ function App() {
   const [messages, setMessages]       = useState([]);
   const [transcript, setTranscript]   = useState('');
 
+  // TTS state
+  const [audioCache,  setAudioCache]  = useState({});
+  const [ttsLoading,  setTtsLoading]  = useState({});
+  const [ttsDisabled, setTtsDisabled] = useState(false);
+
   // Refs
   const wasSecondaryRef    = useRef(false);
   const messagesEndRef     = useRef(null);
@@ -152,7 +157,6 @@ function App() {
   const mediaRecorderRef   = useRef(null);
   const chunksRef          = useRef([]);
   const micStreamRef       = useRef(null);
-  const audioRef           = useRef(null);
 
   // ── Restore session from localStorage ──────────────────────────────────
   useEffect(() => {
@@ -323,6 +327,8 @@ function App() {
       setIsLoading(true);
       setIsChatMode(true);
       setMessages([]);
+      setAudioCache({});
+      setTtsLoading({});
       _callBackend(blob);
     };
 
@@ -345,7 +351,7 @@ function App() {
     }
   };
 
-  // ── Backend: transcribe → LLM → TTS stream ──────────────────────────────
+  // ── Backend: transcribe → LLM → return JSON ────────────────────────────
   const _callBackend = async (blob) => {
     const userId = localStorage.getItem('vc_user_id');
     if (!userId) { handleLogout(); return; }
@@ -365,35 +371,19 @@ function App() {
         return;
       }
 
-      const ct = res.headers.get('Content-Type') || '';
+      const data = await res.json();
 
-      // JSON response — recorded_only (inactive class) or TTS fallback
-      if (ct.includes('application/json')) {
-        const data = await res.json();
-        if (data.status === 'recorded_only') {
-          setIsLoading(false);
-          setIsChatMode(false);
-          return;
-        }
-        setMessages([
-          { role: 'user', content: data.transcript || '(empty transcript)' },
-          { role: 'ai',   content: data.reply      || 'Reply unavailable.'  },
-        ]);
+      if (data.status === 'recorded_only') {
         setIsLoading(false);
+        setIsChatMode(false);
         return;
       }
 
-      // Streaming MP3 — headers carry text
-      const transcript = decodeURIComponent(res.headers.get('X-Transcript') || '');
-      const reply      = decodeURIComponent(res.headers.get('X-Reply')      || '');
-
       setMessages([
-        { role: 'user', content: transcript || '(empty transcript)' },
-        { role: 'ai',   content: reply      || ''                    },
+        { role: 'user', content: data.transcript || '(empty transcript)' },
+        { role: 'ai',   content: data.reply || 'Reply unavailable.', language: data.language },
       ]);
       setIsLoading(false);
-
-      if (reply) await _streamAudio(res);
 
     } catch {
       setMessages([{ role: 'ai', content: 'Could not reach the backend.' }]);
@@ -401,63 +391,37 @@ function App() {
     }
   };
 
-  // ── Streaming MP3 playback ────────────────────────────────────────────────
-  const _streamAudio = async (res) => {
-    const audio = audioRef.current;
-    if (!audio) return;
-    audio.pause();
-
-    if (typeof MediaSource !== 'undefined' && MediaSource.isTypeSupported('audio/mpeg')) {
-      const ms    = new MediaSource();
-      const msUrl = URL.createObjectURL(ms);
-      audio.src   = msUrl;
-
-      await new Promise(resolve => ms.addEventListener('sourceopen', resolve, { once: true }));
-      URL.revokeObjectURL(msUrl);
-
-      const sb     = ms.addSourceBuffer('audio/mpeg');
-      const reader = res.body.getReader();
-
-      const waitUpdate = () => new Promise((ok, fail) => {
-        sb.addEventListener('updateend', ok,   { once: true });
-        sb.addEventListener('error',     fail, { once: true });
-      });
-
-      audio.addEventListener('canplay', function once() {
-        audio.removeEventListener('canplay', once);
-        audio.play().catch(() => {});
-      }, { once: true });
-
-      try {
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          if (sb.updating) await waitUpdate();
-          sb.appendBuffer(value);
-          await waitUpdate();
-        }
-        if (!sb.updating) ms.endOfStream();
-        else sb.addEventListener('updateend', () => ms.endOfStream(), { once: true });
-      } catch {
-        if (ms.readyState === 'open') ms.endOfStream('decode');
-      }
+  // ── On-demand TTS (click-to-play) ────────────────────────────────────────
+  const _playTTS = async (text, language, idx) => {
+    if (audioCache[idx]) {
+      new Audio(audioCache[idx]).play().catch(() => {});
       return;
     }
-
-    // Fallback: buffer everything then play
-    const reader = res.body.getReader();
-    const parts  = [];
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      parts.push(value);
+    setTtsLoading(prev => ({ ...prev, [idx]: true }));
+    try {
+      const userId = localStorage.getItem('vc_user_id');
+      const res = await fetch(`${BACKEND_URL}/tts`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text, user_id: userId, language }),
+      });
+      const ct = res.headers.get('Content-Type') || '';
+      if (ct.includes('application/json')) {
+        const data = await res.json();
+        if (data.status === 'tts_disabled') { setTtsDisabled(true); return; }
+        console.error('TTS error:', data.message || res.status);
+        return;
+      }
+      if (!res.ok) { console.error('TTS request failed:', res.status); return; }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      setAudioCache(prev => ({ ...prev, [idx]: url }));
+      new Audio(url).play().catch(() => {});
+    } catch (e) {
+      console.error('TTS fetch error:', e);
+    } finally {
+      setTtsLoading(prev => ({ ...prev, [idx]: false }));
     }
-    const blobUrl = URL.createObjectURL(new Blob(parts, { type: 'audio/mpeg' }));
-    audio.src = blobUrl;
-    audio.addEventListener('canplay', function once() {
-      audio.removeEventListener('canplay', once);
-      audio.play().catch(() => {});
-    }, { once: true });
   };
 
   // ── Render ────────────────────────────────────────────────────────────────
@@ -475,8 +439,6 @@ function App() {
         {/* Starfield */}
         <Starfield isFullScreen={isChatMode || isVoiceMode} />
 
-        {/* Hidden audio element for TTS playback */}
-        <audio ref={audioRef} style={{ display: 'none' }} />
 
         {!isLoggedIn ? (
           <LoginPage onLogin={handleLogin} />
@@ -517,7 +479,30 @@ function App() {
                 {isLoading && <div className="message ai">Processing…</div>}
                 {messages.map((msg, idx) => (
                   <div key={idx} className={`message ${msg.role}`}>
-                    {msg.content}
+                    <span>{msg.content}</span>
+                    {msg.role === 'ai' && msg.content && (
+                      <button
+                        className={`tts-btn${ttsDisabled ? ' tts-btn--disabled' : ''}`}
+                        onClick={() => !ttsDisabled && !ttsLoading[idx] && _playTTS(msg.content, msg.language, idx)}
+                        disabled={ttsDisabled || !!ttsLoading[idx]}
+                        aria-label="Play audio"
+                      >
+                        {ttsLoading[idx] ? (
+                          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="tts-spinner">
+                            <line x1="12" y1="2" x2="12" y2="6" /><line x1="12" y1="18" x2="12" y2="22" />
+                            <line x1="4.93" y1="4.93" x2="7.76" y2="7.76" /><line x1="16.24" y1="16.24" x2="19.07" y2="19.07" />
+                            <line x1="2" y1="12" x2="6" y2="12" /><line x1="18" y1="12" x2="22" y2="12" />
+                            <line x1="4.93" y1="19.07" x2="7.76" y2="16.24" /><line x1="16.24" y1="7.76" x2="19.07" y2="4.93" />
+                          </svg>
+                        ) : (
+                          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
+                            <path d="M19.07 4.93a10 10 0 0 1 0 14.14" />
+                            <path d="M15.54 8.46a5 5 0 0 1 0 7.07" />
+                          </svg>
+                        )}
+                      </button>
+                    )}
                   </div>
                 ))}
                 <div ref={messagesEndRef} />
