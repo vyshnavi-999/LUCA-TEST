@@ -6,9 +6,10 @@
   width: 100%;
   height: 100%;
   min-height: 100vh;
-  z-index: 10; /* Above starfield */
+  z-index: 10;
   position: relative;
-  padding: 20px;
+  /* Extra bottom padding so form doesn't sit under the fixed bottom-dock button */
+  padding: 20px 20px 180px 20px;
 }
 
 .login-card {
@@ -17,16 +18,7 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  /* Add subtle entrance animation */
   animation: fadeUpIn 0.8s ease-out forwards;
-}
-
-.login-title {
-  font-size: 2.5rem;
-  font-weight: 700;
-  margin-bottom: 2rem;
-  letter-spacing: -1px;
-  text-align: center;
 }
 
 .login-form {
@@ -48,7 +40,7 @@
   font-weight: 600;
   letter-spacing: 1px;
   color: rgba(255, 255, 255, 0.8);
-  margin-left: 0.5rem; /* Slight indent to align with rounded input */
+  margin-left: 0.5rem;
 }
 
 .login-input {
@@ -60,7 +52,7 @@
   backdrop-filter: blur(10px);
   -webkit-backdrop-filter: blur(10px);
   border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 50px; /* Same as Ask LUCA search bar */
+  border-radius: 50px;
   outline: none;
   transition: all 0.3s ease;
   font-family: inherit;
@@ -76,47 +68,7 @@
   box-shadow: 0 0 15px rgba(255, 255, 255, 0.05);
 }
 
-.login-submit-btn {
-  width: 100%;
-  margin-top: 1rem;
-  padding: 1rem 2rem;
-  font-size: 1rem;
-  font-weight: 600;
-  color: white;
-  background: #512da8;
-  border: none;
-  border-radius: 50px;
-  cursor: pointer;
-  transition: all 0.3s ease;
-  box-shadow: 0 0 15px rgba(81, 45, 168, 0.4);
-  font-family: inherit;
-}
-
-.login-submit-btn:hover:not(:disabled) {
-  transform: translateY(-2px);
-  box-shadow: 0 0 25px rgba(81, 45, 168, 0.6);
-  background: #673ab7;
-}
-
-.login-submit-btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-  box-shadow: none;
-  transform: none;
-}
-
-@keyframes fadeUpIn {
-  from {
-    opacity: 0;
-    transform: translateY(20px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-/* ── Dropdown ─────────────────────────────────────────────────────────── */
+/* Dropdown */
 .login-select-wrapper {
   position: relative;
   width: 100%;
@@ -161,7 +113,7 @@
   pointer-events: none;
 }
 
-/* ── Helper & error text ──────────────────────────────────────────────── */
+/* Helper & error text */
 .login-helper {
   font-size: 0.75rem;
   color: rgba(255, 255, 255, 0.35);
@@ -175,17 +127,47 @@
   margin: 0;
 }
 
-/* Mobile adjustments */
+/* Submit button — rendered inside bottom-dock, not inside the card */
+.login-submit-btn {
+  width: 100%;
+  max-width: 600px;
+  padding: 1rem 2rem;
+  font-size: 1rem;
+  font-weight: 600;
+  color: white;
+  background: #512da8;
+  border: none;
+  border-radius: 50px;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  box-shadow: 0 0 15px rgba(81, 45, 168, 0.4);
+  font-family: inherit;
+}
+
+.login-submit-btn:hover:not(:disabled) {
+  transform: translateY(-2px);
+  box-shadow: 0 0 25px rgba(81, 45, 168, 0.6);
+  background: #673ab7;
+}
+
+.login-submit-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  box-shadow: none;
+  transform: none;
+}
+
+@keyframes fadeUpIn {
+  from { opacity: 0; transform: translateY(20px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
 @media (max-width: 768px) {
-  .login-title {
-    font-size: 2rem;
-  }
-  
   .login-input {
     padding: 0.875rem 1.25rem;
     font-size: 0.95rem;
   }
-  
+
   .login-submit-btn {
     padding: 0.875rem 1.5rem;
   }

@@ -7,9 +7,15 @@ import './App.css';
 
 const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://127.0.0.1:8000';
 
-// ── Liquid capsule constants ───────────────────────────────────────────────
 const CAPSULE_WIDTH = 110;
 const CAPSULE_HEIGHT = 48;
+
+const thinkingMessages = [
+  "Understanding your question",
+  "Thinking...",
+  "Preparing response",
+  "Almost done"
+];
 
 function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value));
@@ -103,23 +109,19 @@ function drawLiquidCapsule(canvas, state) {
     ctx.fill();
   };
 
-  // Base idle glow
   const idleAlpha = 0.15 + glow * 0.4;
   drawAuroraBlob(width * 0.5, height * 0.9, width * 0.6, height * 0.5, 60, 100, 255, idleAlpha);
 
   const activeAlpha = 0.05 + glow * 0.65;
 
-  // Blob 1: Purple/Indigo
   const cx1 = width * 0.3 + Math.sin(phase * 1.2) * width * 0.2;
   const cy1 = height * 0.9 - glow * height * 0.5 + Math.cos(drift * 1.5) * 3;
   drawAuroraBlob(cx1, cy1, width * 0.4 + glow * width * 0.2, height * 0.3 + glow * height * 0.4, 140, 60, 255, activeAlpha);
 
-  // Blob 2: Cyan/Light Blue
   const cx2 = width * 0.7 + Math.sin(phase * 0.9 + 2) * width * 0.2;
   const cy2 = height * 0.9 - glow * height * 0.6 + Math.cos(drift * 1.1 + 1) * 3;
   drawAuroraBlob(cx2, cy2, width * 0.35 + glow * width * 0.3, height * 0.25 + glow * height * 0.5, 80, 180, 255, activeAlpha * 0.8);
 
-  // Blob 3: Deep Blue center
   const cx3 = width * 0.5 + Math.sin(phase * 1.5 + 4) * width * 0.1;
   const cy3 = height * 0.95 - glow * height * 0.4;
   drawAuroraBlob(cx3, cy3, width * 0.5 + glow * width * 0.2, height * 0.3 + glow * height * 0.3, 40, 80, 255, activeAlpha);
@@ -128,50 +130,45 @@ function drawLiquidCapsule(canvas, state) {
   ctx.restore();
 }
 
-// ── Component ─────────────────────────────────────────────────────────────
 function App() {
-  // Auth
   const [isLoggedIn, setIsLoggedIn] = useState(false);
-  const [user, setUser] = useState(null);
+  const [user, setUser]             = useState(null);
 
-  // App state
-  const [isChatMode, setIsChatMode]   = useState(false);
+  const [isChatMode,  setIsChatMode]  = useState(false);
   const [isVoiceMode, setIsVoiceMode] = useState(false);
-  const [isLoading, setIsLoading]     = useState(false);
-  const [messages, setMessages]       = useState([]);
-  const [transcript, setTranscript]   = useState('');
+  const [isThinking,  setIsThinking]  = useState(false);
+  const [thinkingMessageIndex, setThinkingMessageIndex] = useState(0);
+  const [messages,    setMessages]    = useState([]);
+  const [transcript,  setTranscript]  = useState('');
 
-  // TTS state
   const [audioCache,  setAudioCache]  = useState({});
   const [ttsLoading,  setTtsLoading]  = useState({});
   const [ttsDisabled, setTtsDisabled] = useState(false);
 
-  // Refs
-  const wasSecondaryRef    = useRef(false);
-  const messagesEndRef     = useRef(null);
-  const buttonRef          = useRef(null);
-  const canvasRef          = useRef(null);
-  const audioCtxRef        = useRef(null);
-  const animationFrameRef  = useRef(null);
-  const liquidStateRef     = useRef(createLiquidState());
-  const mediaRecorderRef   = useRef(null);
-  const chunksRef          = useRef([]);
-  const micStreamRef       = useRef(null);
-  const currentAudioRef    = useRef(null);
+  const wasSecondaryRef   = useRef(false);
+  const messagesEndRef    = useRef(null);
+  const buttonRef         = useRef(null);
+  const canvasRef         = useRef(null);
+  const audioCtxRef       = useRef(null);
+  const animationFrameRef = useRef(null);
+  const liquidStateRef    = useRef(createLiquidState());
+  const mediaRecorderRef  = useRef(null);
+  const chunksRef         = useRef([]);
+  const micStreamRef      = useRef(null);
+  const currentAudioRef   = useRef(null);
 
-  // ── Restore session from localStorage ──────────────────────────────────
+  // Restore session — requires userId from backend
   useEffect(() => {
     const stored = localStorage.getItem('lucaUser');
     if (stored) {
       try {
         const parsed = JSON.parse(stored);
-        // Require backend userId — old sessions without it must re-login
         if (parsed.fullName && parsed.mobileNumber && parsed.userId) {
           setUser(parsed);
           setIsLoggedIn(true);
         }
       } catch {
-        console.error('Invalid session data in localStorage');
+        console.error('Invalid session data');
       }
     }
   }, []);
@@ -194,7 +191,20 @@ function App() {
     setTranscript('');
   };
 
-  // ── Voice mode: record + visualise ──────────────────────────────────────
+  // Thinking message cycling
+  useEffect(() => {
+    let interval;
+    if (isThinking) {
+      interval = setInterval(() => {
+        setThinkingMessageIndex(prev => (prev + 1) % thinkingMessages.length);
+      }, 2500);
+    } else {
+      setThinkingMessageIndex(0);
+    }
+    return () => clearInterval(interval);
+  }, [isThinking]);
+
+  // Voice mode: record + visualise
   useEffect(() => {
     let streamRef;
 
@@ -206,14 +216,12 @@ function App() {
           streamRef = stream;
           micStreamRef.current = stream;
 
-          // Start MediaRecorder
           const recorder = new MediaRecorder(stream);
           chunksRef.current = [];
           recorder.ondataavailable = e => { if (e.data.size > 0) chunksRef.current.push(e.data); };
           mediaRecorderRef.current = recorder;
           recorder.start();
 
-          // Liquid capsule visualization (unchanged from original)
           const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
           audioCtxRef.current = audioCtx;
           const analyser = audioCtx.createAnalyser();
@@ -226,9 +234,7 @@ function App() {
 
           const renderFrame = () => {
             const now = performance.now();
-            const dt  = liquidState.lastTime
-              ? Math.min((now - liquidState.lastTime) / 1000, 0.04)
-              : 1 / 60;
+            const dt  = liquidState.lastTime ? Math.min((now - liquidState.lastTime) / 1000, 0.04) : 1 / 60;
             liquidState.lastTime = now;
 
             analyser.getByteFrequencyData(frequencyData);
@@ -268,17 +274,15 @@ function App() {
     };
   }, [isVoiceMode]);
 
-  // ── Scroll chat to bottom ────────────────────────────────────────────────
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
+  }, [messages, isThinking]);
 
-  // Draw initial idle capsule once
   useEffect(() => {
     drawLiquidCapsule(canvasRef.current, liquidStateRef.current);
   }, []);
 
-  // ── Browser back-button management ──────────────────────────────────────
+  // Browser back-button
   useEffect(() => {
     const isSecondary = isChatMode || isVoiceMode;
     if (isSecondary && !wasSecondaryRef.current) {
@@ -300,14 +304,15 @@ function App() {
     return () => window.removeEventListener('popstate', handlePopState);
   }, [isChatMode, isVoiceMode]);
 
-  // ── Helpers ──────────────────────────────────────────────────────────────
   const _stopRecorder = () => {
     const rec = mediaRecorderRef.current;
     if (rec && rec.state !== 'inactive') rec.stop();
   };
 
-  // ── Handlers ─────────────────────────────────────────────────────────────
-  const handleOpenChat = () => setIsVoiceMode(true);
+  const handleOpenChat = () => {
+    if (isChatMode && isThinking) return;
+    setIsVoiceMode(true);
+  };
 
   const handleVoiceCancel = () => {
     _stopRecorder();
@@ -318,14 +323,13 @@ function App() {
   const handleVoiceSuccess = () => {
     const recorder = mediaRecorderRef.current;
     const doSubmit = () => {
-      // Stop mic stream now that we have all chunks
       if (micStreamRef.current) {
         micStreamRef.current.getTracks().forEach(t => t.stop());
         micStreamRef.current = null;
       }
       const blob = new Blob(chunksRef.current, { type: 'audio/webm' });
       setIsVoiceMode(false);
-      setIsLoading(true);
+      setIsThinking(true);
       setIsChatMode(true);
       setMessages([]);
       setAudioCache({});
@@ -352,7 +356,6 @@ function App() {
     }
   };
 
-  // ── Backend: transcribe → LLM → return JSON ────────────────────────────
   const _callBackend = async (blob) => {
     const userId = localStorage.getItem('vc_user_id');
     if (!userId) { handleLogout(); return; }
@@ -368,14 +371,14 @@ function App() {
         if (res.status === 401) { handleLogout(); return; }
         const data = await res.json().catch(() => ({}));
         setMessages([{ role: 'ai', content: 'Error: ' + (data.detail || res.status) }]);
-        setIsLoading(false);
+        setIsThinking(false);
         return;
       }
 
       const data = await res.json();
 
       if (data.status === 'recorded_only') {
-        setIsLoading(false);
+        setIsThinking(false);
         setIsChatMode(false);
         return;
       }
@@ -384,15 +387,14 @@ function App() {
         { role: 'user', content: data.transcript || '(empty transcript)' },
         { role: 'ai',   content: data.reply || 'Reply unavailable.', language: data.language },
       ]);
-      setIsLoading(false);
+      setIsThinking(false);
 
     } catch {
       setMessages([{ role: 'ai', content: 'Could not reach the backend.' }]);
-      setIsLoading(false);
+      setIsThinking(false);
     }
   };
 
-  // ── On-demand TTS (click-to-play) ────────────────────────────────────────
   const _stopCurrentAudio = () => {
     if (currentAudioRef.current) {
       currentAudioRef.current.pause();
@@ -443,27 +445,30 @@ function App() {
     }
   };
 
-  // ── Render ────────────────────────────────────────────────────────────────
   return (
     <>
-      <main className={`app-main ${isChatMode ? 'chat-mode' : 'fade-in'}`}>
+      <main className={`app-main ${isChatMode ? 'chat-mode' : ''}`}>
 
-        {/* Premium Background Layers */}
         <div className="ambient-background">
           <div className="ambient-colors"></div>
           <div className="ambient-texture"></div>
           <div className="ambient-valley-mask"></div>
         </div>
 
-        {/* Starfield */}
         <Starfield isFullScreen={isChatMode || isVoiceMode} />
 
+        {/* Logo — shown on login page and home page, hidden in chat/voice */}
+        {(!isLoggedIn || (!isChatMode && !isVoiceMode)) && (
+          <div className="logo-container">
+            <img src="logo.png?v=3" alt="LUCA Logo" className="app-logo" />
+          </div>
+        )}
 
         {!isLoggedIn ? (
           <LoginPage onLogin={handleLogin} />
         ) : (
           <>
-            {/* Back button (voice / chat modes) */}
+            {/* Back button */}
             {(isChatMode || isVoiceMode) && (
               <button
                 className="back-btn fade-in"
@@ -476,62 +481,93 @@ function App() {
               </button>
             )}
 
-            {/* Sign-out — only on home / chat, not during recording */}
+            {/* Sign-out */}
             {!isVoiceMode && (
               <button className="signout-btn" onClick={handleLogout}>
                 Sign out
               </button>
             )}
 
-            {/* Center content — home & voice mode */}
-            {(!isChatMode || isVoiceMode) && (
-              <div className="center-content">
-                <h1 className="welcome-text fade-in-text">
-                  {isVoiceMode ? (transcript || 'Listening...') : 'Welcome'}
-                </h1>
-              </div>
-            )}
+            {/* Center content — always in DOM, hidden via opacity when in chat */}
+            <div
+              className="center-content"
+              style={{
+                opacity: isLoggedIn && isChatMode && !isVoiceMode ? 0 : 1,
+                pointerEvents: isLoggedIn && isChatMode && !isVoiceMode ? 'none' : 'auto',
+                transition: 'opacity 0.3s ease'
+              }}
+            >
+              <h1 className="welcome-text fade-in-text">
+                {isVoiceMode ? (transcript || 'Listening...') : 'Welcome'}
+              </h1>
+            </div>
 
             {/* Chat history */}
             {isChatMode && !isVoiceMode && (
               <div className="chat-history">
-                {isLoading && <div className="message ai">Processing…</div>}
                 {messages.map((msg, idx) => (
-                  <div key={idx} className={`message ${msg.role}`}>
-                    <span>{msg.content}</span>
+                  <div key={idx} className={`message-row ${msg.role}`}>
+                    <div className={`message ${msg.role}`}>
+                      <div className="message-content fade-in">
+                        {msg.content}
+                      </div>
+                    </div>
                     {msg.role === 'ai' && msg.content && (
                       <button
-                        className={`tts-btn${ttsDisabled ? ' tts-btn--disabled' : ''}`}
+                        className={`speaker-btn fade-in${ttsDisabled ? ' speaker-btn--disabled' : ''}`}
                         onClick={() => !ttsDisabled && !ttsLoading[idx] && _playTTS(msg.content, msg.language, idx)}
                         disabled={ttsDisabled || !!ttsLoading[idx]}
-                        aria-label="Play audio"
+                        aria-label="Listen to response"
+                        style={{ background: 'rgba(255,255,255,0.02)', padding: '4px' }}
                       >
                         {ttsLoading[idx] ? (
-                          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="tts-spinner">
+                          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="tts-spinner">
                             <line x1="12" y1="2" x2="12" y2="6" /><line x1="12" y1="18" x2="12" y2="22" />
                             <line x1="4.93" y1="4.93" x2="7.76" y2="7.76" /><line x1="16.24" y1="16.24" x2="19.07" y2="19.07" />
                             <line x1="2" y1="12" x2="6" y2="12" /><line x1="18" y1="12" x2="22" y2="12" />
                             <line x1="4.93" y1="19.07" x2="7.76" y2="16.24" /><line x1="16.24" y1="7.76" x2="19.07" y2="4.93" />
                           </svg>
                         ) : (
-                          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                            <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
-                            <path d="M19.07 4.93a10 10 0 0 1 0 14.14" />
-                            <path d="M15.54 8.46a5 5 0 0 1 0 7.07" />
+                          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#ffffff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
+                            <path d="M15.54 8.46a5 5 0 0 1 0 7.07"></path>
+                            <path d="M19.07 4.93a10 10 0 0 1 0 14.14"></path>
                           </svg>
                         )}
                       </button>
                     )}
                   </div>
                 ))}
+
+                {/* Thinking state */}
+                {isThinking && (
+                  <div className="thinking-container fade-in">
+                    <div className="thinking-dots">
+                      <div className="gemini-dot dot-1"></div>
+                      <div className="gemini-dot dot-2"></div>
+                      <div className="gemini-dot dot-3"></div>
+                    </div>
+                    <div className="thinking-text-container">
+                      {thinkingMessages.map((msg, idx) => (
+                        <span
+                          key={idx}
+                          className={`thinking-text ${idx === thinkingMessageIndex ? 'active' : ''}`}
+                        >
+                          {msg}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
                 <div ref={messagesEndRef} />
               </div>
             )}
 
             {/* Ask LUCA search bar */}
             {!isVoiceMode && (
-              <div className="bottom-bar-container slide-up">
-                <div className="search-bar" onClick={handleOpenChat}>
+              <div className="bottom-dock slide-up">
+                <div className={`search-bar ${isChatMode && isThinking ? 'locked' : ''}`} onClick={handleOpenChat}>
                   <span className="placeholder-text">Ask LUCA</span>
                 </div>
               </div>
@@ -539,12 +575,12 @@ function App() {
 
             {/* Voice controls */}
             {isVoiceMode && (
-              <div className="voice-container slide-up">
+              <div className="bottom-dock slide-up">
                 <div className="voice-bottom-controls">
                   <button className="voice-btn" aria-label="Cancel" onClick={handleVoiceCancel}>
                     <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                      <line x1="18" y1="6"  x2="6"  y2="18"></line>
-                      <line x1="6"  y1="6"  x2="18" y2="18"></line>
+                      <line x1="18" y1="6" x2="6" y2="18"></line>
+                      <line x1="6" y1="6" x2="18" y2="18"></line>
                     </svg>
                   </button>
 

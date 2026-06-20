@@ -6,12 +6,12 @@ const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://127.0.0.1:8000';
 const CLASS_OPTIONS = ['1st','2nd','3rd','4th','5th','6th','7th','8th','9th','10th','11th','12th','Staff'];
 
 const LoginPage = ({ onLogin }) => {
-  const [fullName,      setFullName]      = useState('');
-  const [mobileNumber,  setMobileNumber]  = useState('');
-  const [standard,      setStandard]      = useState('');
-  const [isValid,       setIsValid]       = useState(false);
-  const [loading,       setLoading]       = useState(false);
-  const [error,         setError]         = useState('');
+  const [fullName,     setFullName]     = useState('');
+  const [mobileNumber, setMobileNumber] = useState('');
+  const [standard,     setStandard]     = useState('');
+  const [isValid,      setIsValid]      = useState(false);
+  const [loading,      setLoading]      = useState(false);
+  const [error,        setError]        = useState('');
 
   useEffect(() => {
     const digitsOnly = mobileNumber.replace(/\D/g, '');
@@ -53,7 +53,6 @@ const LoginPage = ({ onLogin }) => {
         return;
       }
 
-      // Persist session
       const user = {
         fullName:     data.name || fullName.trim(),
         mobileNumber: mobileNumber.replace(/\D/g, ''),
@@ -61,10 +60,10 @@ const LoginPage = ({ onLogin }) => {
         userId:       data.user_id,
         createdAt:    new Date().toISOString(),
       };
-      localStorage.setItem('lucaUser',        JSON.stringify(user));
-      localStorage.setItem('vc_user_id',      data.user_id);
-      localStorage.setItem('vc_identifier',   data.identifier);
-      localStorage.setItem('vc_name',         data.name || '');
+      localStorage.setItem('lucaUser',      JSON.stringify(user));
+      localStorage.setItem('vc_user_id',    data.user_id);
+      localStorage.setItem('vc_identifier', data.identifier);
+      localStorage.setItem('vc_name',       data.name || '');
 
       onLogin(user);
 
@@ -78,9 +77,7 @@ const LoginPage = ({ onLogin }) => {
   return (
     <div className="login-page-container">
       <div className="login-card">
-        <h1 className="login-title">Welcome</h1>
-
-        <form onSubmit={handleSubmit} className="login-form">
+        <form id="luca-login-form" onSubmit={handleSubmit} className="login-form">
 
           <div className="login-field">
             <label htmlFor="fullName">FULL NAME *</label>
@@ -130,15 +127,19 @@ const LoginPage = ({ onLogin }) => {
 
           {error && <p className="login-error">{error}</p>}
 
-          <button
-            type="submit"
-            className="login-submit-btn"
-            disabled={!isValid || loading}
-          >
-            {loading ? 'Signing in…' : 'Login'}
-          </button>
-
         </form>
+      </div>
+
+      {/* Submit button lives outside the card, anchored in the bottom dock */}
+      <div className="bottom-dock slide-up">
+        <button
+          type="submit"
+          form="luca-login-form"
+          className="login-submit-btn"
+          disabled={!isValid || loading}
+        >
+          {loading ? 'Signing in…' : 'Login'}
+        </button>
       </div>
     </div>
   );
