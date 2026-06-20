@@ -481,9 +481,12 @@ async def transcribe_stream_endpoint(audio: UploadFile = File(...), user_id: str
                 detail="Daily limit reached — recording saved but not processed.",
             )
 
-    # PATH B: class not active — save audio, skip ASR/LLM/TTS
+    # PATH B: class not active — audio already on S3, log the row, skip ASR/LLM/TTS
     if class_standard != ACTIVE_CLASS and class_standard != "Staff":
-        await save_recording(uid, audio_key, "", None, "recorded_only")
+        try:
+            await save_recording(uid, audio_key, "", None, "incomplete")
+        except Exception as exc:
+            print(f"PATH B DB save failed (audio is on S3): {exc}", flush=True)
         return JSONResponse({"status": "recorded_only"})
 
     # PATH A: active class or Staff — full pipeline
